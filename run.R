@@ -1,26 +1,31 @@
-setwd("/Users/joebahr/sanford/pubpol813/replication_project")
+# set working directory
+setwd("/Users/joebahr/sanford/pubpol813/pubpol813_replication_project")
 
+# load packages
 library(haven)
 library(tidyverse)
 library(config)
 library(purrr)
 library(magrittr)
 
+# import config
 config <- config::get()
 policy_year <- config$policy_year
-acs_df <- haven::read_stata("./ACS_PPS813_F2021_revised.dta")
+
+# read in data
+acs_over24_df <- haven::read_stata("./ACS_PPS813_F2021_revised.dta")
+acs_under24_df <- haven::read_stata("./ACS_PPS813_F2021_15to24.dta")
+
+# append data
+acs_df <- rbind.data.frame(acs_over24_df, acs_under24_df)
 
 ## DACA ELIGIBILITY
-# 1) no lawful status as of June 15, 2012 xxx
-# 2) applicants came to US before age 16   xxx
-# 3) under the age of 31 as of June 2012  xxx
-# 4) continuously resided in US since June 2007  xxx ?? just at lease five years?
-# 5) high school diploma or GED   xxx
-# 6) no felony xxx
-
-# account for year prior eligibility by adding 1 to different criteria
-# set to zero if we don't do this
-yrprior = 1
+# 1) no lawful status as of June 15, 2012
+# 2) applicants came to US before age 16
+# 3) under the age of 31 as of June 2012
+# 4) continuously resided in US since June 2007
+# 5) high school diploma or GED
+# 6) no felony
 
 elig_df = acs_df %>% 
   filter(educ >= 6) %>% # filter to only high school grads and up / believe this is already done
@@ -31,9 +36,8 @@ elig_df = acs_df %>%
          age_june_2012_elig = ifelse(age_june_2012 < 31, 1, 0),
          age_of_entry = age - yrsusa1,
          age_of_entry_elig = ifelse(age_of_entry < 16,1,0),
-         years_in_us_elig = ifelse(yrsusa1 >= 5 + yrprior, 1, 0),
-         cont_residence_elig = ifelse(yrimmig <= 2007, 1, 0),
-         eligible = age_june_2012_elig * age_of_entry_elig * years_in_us_elig,
+         cont_residence_elig = ifelse(yrimmig < 2007, 1, 0),
+         eligible = age_june_2012_elig * age_of_entry_elig * cont_residence_elig,
          eligibility_groups = case_when(citizen != 3 ~ 'citizen',
                                         citizen == 3 & eligible == 1 ~ 'noncitizen_daca',
                                         citizen == 3 & eligible == 0 ~ 'noncitizen_nondaca')
@@ -65,9 +69,3 @@ table1 <- elig_df %>%
   summarise_at(.vars = vars(starts_with("outcome_")), .funs = mean)
 
 
-
-elig_df %>% 
-  group_by(years_in_us_elig) %>% count
-
-acs_df %>% 
-  group_by(citizen) %>% count
