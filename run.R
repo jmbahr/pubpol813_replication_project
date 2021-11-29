@@ -54,7 +54,7 @@ elig_df = acs_df %>%
 # 8) individual is attending school (binary) - school == 2
 # 9) individual has obtained a GED (binary) - educd == 64
 
-table1 <- elig_df %>% 
+outcome_df <- elig_df %>% 
   mutate(outcome_worked_last_week = ifelse(wrklstwk == 2, 1, 0),
          outcome_worked_last_year = ifelse(workedyr == 3, 1, 0),
          outcome_hours_worked = uhrswork,
@@ -64,8 +64,26 @@ table1 <- elig_df %>%
          outcome_income = inctot,
          outcome_school_attendance = ifelse(school == 2, 1, 0),
          outcome_ged = ifelse(educd == 64, 1, 0)
-         ) %>% 
-  group_by(eligibility_groups) %>% 
-  summarise_at(.vars = vars(starts_with("outcome_")), .funs = mean)
+         ) 
 
+calc_t_test <- function(df, .x, control = "noncitizen_nondaca"){
+  
+  daca <- df %>% filter(eligibility_groups == "noncitizen_daca") %>% select({{.x}})
+  daca_outcome <- daca[[.x]]
+  
+  control <- df %>% filter(eligibility_groups == control) %>% select({{.x}})
+  control_outcome <- control[[.x]]
+  
+  daca_mean <- mean(daca_outcome)
+  control_mean <- mean(control_outcome)
+  difference <- daca_mean - control_mean
+  t_stat <- t.test(daca_outcome, control_outcome, mu = 0, paired = FALSE)$statistic
+  
+  return(data.frame(outcome_variable = .x, daca_mean = daca_mean, control_mean, 
+                    difference, t_stat))
+}
+
+outcome_vars <- outcome_df %>% select(starts_with("outcome")) %>% names
+
+table1 <- map_dfr(.x = outcome_vars, .f = calc_t_test, df = outcome_df)
 
