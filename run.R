@@ -54,6 +54,24 @@ elig_df = acs_df %>%
 # 8) individual is attending school (binary) - school == 2
 # 9) individual has obtained a GED (binary) - educd == 64
 
+# Demographics
+# 1) Years in US (yrsusa1)
+# 2) Age Entered US (age_of_entry)
+# 3) Male (sex == 1)
+# 4) White (race == 1)
+# 5) Black (race == 2)
+# 6) Asian (race %in% c(4,5,6))
+# 7) Hispanic ethnicity (hispan %in% c(1,2,3,4))
+# 8) Home language of Spanish (language == 12)
+# 9) Born in Latin America (bpl between 200 and 300)
+# 10) Age (age)
+# 11) Married (marst %in% c(1,2))
+# 12) Live in a metro area (metro %in% c(2,3,4))
+# 13) High School Degree (educ >= 6)
+# 14) Some college (educ >= 7)
+# 15) College degree (educd >= 101)
+# 16) Count
+
 outcome_df <- elig_df %>% 
   mutate(outcome_worked_last_week = ifelse(wrklstwk == 2, 1, 0),
          outcome_worked_last_year = ifelse(workedyr == 3, 1, 0),
@@ -63,10 +81,26 @@ outcome_df <- elig_df %>%
          outcome_self_employed = ifelse(classwkr == 1, 1, 0),
          outcome_income = inctot,
          outcome_school_attendance = ifelse(school == 2, 1, 0),
-         outcome_ged = ifelse(educd == 64, 1, 0)
+         outcome_ged = ifelse(educd == 64, 1, 0),
+         demo_yrsusa = yrsusa1,
+         demo_age_of_entry = age_of_entry,
+         demo_male = ifelse(sex == 1, 1, 0),
+         demo_white = ifelse(race == 1, 1, 0),
+         demo_black = ifelse(race == 2, 1, 0),
+         demo_asian = ifelse(race %in% c(4,5,6), 1, 0),
+         demo_home_spanish = ifelse(language == 12, 1, 0),
+         demo_latin_america = ifelse(between(bpl, 200, 300), 1, 0),
+         demo_age = age,
+         demo_married = ifelse(marst %in% c(1,2), 1, 0),
+         demo_metro = ifelse(metro %in% c(2,3,4), 1, 0),
+         demo_some_college = ifelse(educ >= 7, 1, 0),
+         demo_college = ifelse(educd >= 101, 1, 0)
          ) 
 
-calc_t_test <- function(df, .x, control = "noncitizen_nondaca"){
+
+# create function to calculate means and estimate a t-statistic
+# for null hypothesis that difference in means is equal to 0
+calc_table1 <- function(df, .x, control = "noncitizen_nondaca"){
   
   daca <- df %>% filter(eligibility_groups == "noncitizen_daca") %>% select({{.x}})
   daca_outcome <- daca[[.x]]
@@ -83,7 +117,22 @@ calc_t_test <- function(df, .x, control = "noncitizen_nondaca"){
                     difference, t_stat))
 }
 
-outcome_vars <- outcome_df %>% select(starts_with("outcome")) %>% names
+# create vector of variables used for table 1 using prefixes
+outcome_vars <- outcome_df %>% select(starts_with("outcome_")) %>% names
+demo_vars <- outcome_df %>% select(starts_with("demo_")) %>% names
+table1_vars <- c(outcome_vars, demo_vars)
 
-table1 <- map_dfr(.x = outcome_vars, .f = calc_t_test, df = outcome_df)
+# need to filter on ages before calcing table 1
 
+# t-test compared to daca ineligible
+table1_nondaca <- map_dfr(.x = table1_vars, .f = calc_table1, 
+                          df = outcome_df, control = "noncitizen_nondaca")
+  
+# t-test compared to citizens
+table1_citizen <- map_dfr(.x = table1_vars, .f = calc_table1, 
+                          df = outcome_df, control = "citizen") %>% 
+  select(-daca_mean)
+
+# join the two together for table 1
+combined_table1 <- table1_nondaca %>% inner_join(table1_citizen, by = "outcome_variable",
+                                                 suffix = c(".nondaca", ".citizen"))
