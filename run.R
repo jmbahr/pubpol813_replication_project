@@ -12,10 +12,10 @@ library(config)
 library(purrr)
 library(magrittr)
 library(scales)
+library(fixest)
 
-# import config
-config <- config::get()
-policy_year <- config$policy_year
+# set year of policy
+policy_year <- 2012
 
 ######### Read ##########
 
@@ -347,6 +347,7 @@ model_df <- outcome_df %>%
 
 rm(outcome_df)
 
+
 ## need to parameterize the various cuts of demographics
 get_coefs <- function(model_df, outcome, final_year){
   
@@ -354,40 +355,53 @@ get_coefs <- function(model_df, outcome, final_year){
   start <- Sys.time()
   
   # dynamically create formula given outcome of interest
-  formula <- sprintf("%s ~ eligible + after_daca + did_term + demo_some_college + 
+  formula <- sprintf("%s ~ did_term + eligible + after_daca + demo_some_college + 
                       demo_college + demo_male  + demo_black + demo_asian + demo_married + 
-                      state_unemployment + factor(demo_age) + factor(age_of_entry) + 
-                      factor(year) + factor(statefip) + factor(year) * factor(statefip)",
-                     outcome) %>% as.formula()
+                      state_unemployment | demo_age + age_of_entry + year +
+                      statefip + year^statefip", outcome) %>% as.formula()
   
-  model <- lm(formula = formula,
-              data = model_df %>% filter(year <= final_year))
+  # estimate fixed effects model, clustering standard errors by statefip^year
+  model <- fixest::feols(data = model_df %>% 
+                           filter(year <= final_year & 
+                                  !!rlang::sym(outcome) != -9),
+              cluster = c("statefip^year"),
+              collin.tol = 0.0000000000000000000000000000000000000000000000001,
+              fml = formula)
   
   model_summary <- model %>% summary()
   
-  did_coef <- model_summary$coefficients[4,]
-  eligible_coef <- model_summary$coefficients[2,]
+  # extract relevant coefficients and values
+  did_coef <- model_summary$coefficients[["did_term"]]
+  did_se <- model_summary$se[["did_term"]]
+  did_t <- model_summary$coeftable[1,3]
+  did_p <- model_summary$coeftable[1,4]
+  
+  elig_coef <- model_summary$coefficients[["eligible"]]
+  elig_se <- model_summary$se[["eligible"]]
+  elig_t <- model_summary$coeftable[2,3]
+  elig_p <- model_summary$coeftable[2,4]
+  
+  # extract number of observations and rsquared
+  n <- model_summary$nobs
+  rsq <- fixest::r2(x = model, type = "r2", full_names = FALSE)
   
   # still need to round this out to include eligible coefficient
-  output_df <- data.frame(outcome_variable = outcome, did_coef = did_coef[[1]],
-                          did_stderr = did_coef[[2]], did_t = did_coef[[3]], 
-                          did_p = did_coef[[4]])
+  output_df <- data.frame(outcome_variable = outcome, did_coef = did_coef,
+                          did_se = did_se, did_t = did_t, did_p = did_p,
+                          elig_coef = elig_coef, elig_se = elig_se,
+                          elig_t = elig_t, elig_p = elig_p,
+                          n = n, rsquared = rsq)
   
   end <- Sys.time()
   print(end-start)
   return(output_df)
 }
 
-# can toggle test to True/False to only run on a single 
-test <- TRUE
 
-outcome_vars <- if (test) {
-                  outcome_vars[1]
-                  } else {
-                    outcome_vars
-                  }
-
+##############################################
 # PANEL A - ENTERED US BETWEEN AGES 12 AND 19
+##############################################
+
 panel_a_df <- model_df %>% 
   filter(citizen == 3 &
            between(age_of_entry, 12, 19))
@@ -402,8 +416,9 @@ panel_a_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs,
 
 rm(panel_a_df)
 
-
+#####################################################################
 # PANEL B - AGES 27 TO 34 IN JUNE 2012 AND ENTERED US BEFORE AGE 16
+#####################################################################
 
 # filter to non-citizens, age 27-34 as of June 2012, entered US before age 16
 ## NEED TO FIX: believe the 18-35 filter is bad for this cut (i.e. if 41 year old in 2019 is excluded)
@@ -422,8 +437,10 @@ panel_b_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs,
 
 rm(panel_b_df)
 
-
+########################################
 # PANEL C - ALL NON-CITIZENS AGES 18-35
+########################################
+
 panel_c_df <- model_df %>% 
   filter(citizen == 3)
 
@@ -437,8 +454,10 @@ panel_c_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs,
 
 rm(panel_c_df)
 
-
+######################################################
 # PANEL D -  ALL CITIZENS AND NON-CITIZENS AGES 18-35
+######################################################
+
 panel_d_df <- model_df
 
 # run model on Panel D up to 2014
@@ -451,4 +470,21 @@ panel_d_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs,
 
 rm(panel_d_df)
 
+results_2014 <- panel_a_2014_coefs %>% mutate(panel = "panel_a") %>% 
+  rbind.data.frame(panel_b_2014_coefs %>% mutate(panel = "panel_b")) %>% 
+  rbind.data.frame(panel_c_2014_coefs %>% mutate(panel = "panel_c")) %>%
+  rbind.data.frame(panel_d_2014_coefs %>% mutate(panel = "panel_d"))
 
+results_2019 <- panel_a_2019_coefs %>% mutate(panel = "panel_a") %>% 
+  rbind.data.frame(panel_b_2019_coefs %>% mutate(panel = "panel_b")) %>% 
+  rbind.data.frame(panel_c_2019_coefs %>% mutate(panel = "panel_c")) %>%
+  rbind.data.frame(panel_d_2019_coefs %>% mutate(panel = "panel_d"))
+
+results_2014 %>% write_csv("./output/regression_results_2014.csv")
+results_2019 %>% write_csv("./output/regression_results_2019.csv")
+
+combined_table1 %>% write_csv("./output/table1.csv")
+
+fig_25_df %>% write_csv("./output/figs2to5.csv")
+
+rm(list = ls())
