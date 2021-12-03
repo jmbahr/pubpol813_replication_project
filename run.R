@@ -26,8 +26,9 @@ acs_under24_df <- haven::read_stata("./ACS_PPS813_F2021_15to24.dta")
 # append data
 acs_df <- rbind.data.frame(acs_over24_df, acs_under24_df)
 
-
-######### Prep ##########
+#######################################
+############### PREP ##################
+#######################################
 
 ## DACA ELIGIBILITY
 # 1) no lawful status as of June 15, 2012
@@ -47,11 +48,14 @@ elig_df = acs_df %>%
          age_of_entry = age - yrsusa1,
          age_of_entry_elig = ifelse(age_of_entry < 16,1,0),
          cont_residence_elig = ifelse(yrimmig <= 2007, 1, 0),  # write in paper how the numbers changed insignificantly
-         eligible = age_june_2012_elig * age_of_entry_elig * cont_residence_elig,
+         non_citizen = ifelse(citizen == 3, 1, 0),
+         eligible = age_june_2012_elig * age_of_entry_elig * cont_residence_elig * non_citizen,
          eligibility_groups = case_when(citizen != 3 ~ 'citizen',
                                         citizen == 3 & eligible == 1 ~ 'noncitizen_daca',
                                         citizen == 3 & eligible == 0 ~ 'noncitizen_nondaca')
   )
+
+rm(acs_df, acs_over24_df, acs_under24_df)
 
 # Outcomes
 # 1) worked in last week (binary) - wrklstwk == 2, omit Nulls when calculating means
@@ -123,6 +127,8 @@ outcome_df <- elig_df %>%
          did_term = after_daca * eligible
   )
 
+rm(elig_df)
+
 ######### Table 1 ##########
 
 # create function to calculate means and estimate a t-statistic
@@ -177,8 +183,8 @@ table1_citizen <- purrr::map_dfr(.x = table1_vars, .f = calc_table1,
 combined_table1 <- table1_nondaca %>% inner_join(table1_citizen, by = "outcome_variable",
                                                  suffix = c(".nondaca", ".citizen"))
 
-
-######### Figures 2-5 ##########
+##############################################
+################ FIGURES 2-5 #################
 
 ### NEED TO ADD 90th percentile graph
 
@@ -186,15 +192,13 @@ combined_table1 <- table1_nondaca %>% inner_join(table1_citizen, by = "outcome_v
 fig_25_years <- outcome_df %>% filter(year <= 2014) %>% 
   select(year) %>% distinct()
 
-year_test <- if (.x == "test") fig_25_years %>% filter(between(year, 2008, 2014)) else fig_25_years
-
 # create function to calculate yearly differences in outcomes
 calc_fig25 <- function(df, fig_25_years, .x, control = "noncitizen_nondaca"){
   
   # print name of outcome variable for debugging purposes
   print(.x)
   
-  # create if statement for years since healthcare only arrived in 2008
+  # create if statement for years since healthcare question only arrived in 2008
   years <- if (.x == "outcome_healthcare") {
     fig_25_years %>% filter(between(year, 2008, 2014))
   } else {
@@ -262,7 +266,8 @@ fig_25_df <- map_dfr(.x = outcome_vars, .f = calc_fig25,
 
 # create df for estimating d-in-d
 # filter to only non-citizens and pre-2014
-did_df = outcome_df %>% filter(citizen == 3 & year <= 2014)
+did_df = outcome_df %>% filter(citizen == 3 & year <= 2014) %>% 
+  select(starts_with("outcome_"), after_daca, eligible, did_term)
 
 
 
@@ -319,7 +324,12 @@ plot_fig25 <- function(fig_25_df, did_df, outcome){
 # execute all plots
 map(.x = outcome_vars, .f = plot_fig25, fig_25_df = fig_25_df, did_df = did_df)
 
-####### MODEL ######
+
+####################################
+############## MODEL ###############
+####################################
+
+## NOTE: NEED TO ADD CLUSTERED STANDARD ERRORS ##
 
 # create state/year unemployment level variable
 state_unemployed <- outcome_df %>% 
@@ -328,18 +338,22 @@ state_unemployed <- outcome_df %>%
   summarise(state_unemployment = mean(outcome_unemployed))
 
 # join on state/year unemployment and select columns of interest
+# filter to only non-citizens
 model_df <- outcome_df %>% 
-  filter(citizen == 3) %>% 
   left_join(state_unemployed, by = c("year", "statefip")) %>% 
   select(starts_with("outcome_"), starts_with("demo_"), eligible, after_daca, 
-         did_term, state_unemployment, age, age_of_entry, year, statefip)
+         did_term, state_unemployment, age, age_of_entry, year, statefip,
+         age_june_2012, citizen)
 
+rm(outcome_df)
 
 ## need to parameterize the various cuts of demographics
 get_coefs <- function(model_df, outcome, final_year){
   
   print(outcome)
+  start <- Sys.time()
   
+  # dynamically create formula given outcome of interest
   formula <- sprintf("%s ~ eligible + after_daca + did_term + demo_some_college + 
                       demo_college + demo_male  + demo_black + demo_asian + demo_married + 
                       state_unemployment + factor(demo_age) + factor(age_of_entry) + 
@@ -354,20 +368,87 @@ get_coefs <- function(model_df, outcome, final_year){
   did_coef <- model_summary$coefficients[4,]
   eligible_coef <- model_summary$coefficients[2,]
   
+  # still need to round this out to include eligible coefficient
   output_df <- data.frame(outcome_variable = outcome, did_coef = did_coef[[1]],
                           did_stderr = did_coef[[2]], did_t = did_coef[[3]], 
                           did_p = did_coef[[4]])
   
+  end <- Sys.time()
+  print(end-start)
   return(output_df)
 }
 
+# can toggle test to True/False to only run on a single 
+test <- TRUE
 
-# 1) ENTERED US BETWEEN AGES 12 AND 19
+outcome_vars <- if (test) {
+                  outcome_vars[1]
+                  } else {
+                    outcome_vars
+                  }
 
-# 2) AGES 27 TO 34 IN JUNE 2012 AND ENTERED US BEFORE AGE 16
+# PANEL A - ENTERED US BETWEEN AGES 12 AND 19
+panel_a_df <- model_df %>% 
+  filter(citizen == 3 &
+           between(age_of_entry, 12, 19))
 
-coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, model_df = model_df, final_year = 2014)
+# run model against panel a sample up to 2014
+panel_a_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_a_df, final_year = 2014)
 
-coefs_2019 <- map_dfr(.x = outcome_vars, .f = get_coefs, model_df = model_df, final_year = 2019)
+# run model against panel a sample up to 2019
+panel_a_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_a_df, final_year = 2019)
 
-get_coefs(model_df = model_df, outcome = "outcome_hours_worked", final_year = 2014)
+rm(panel_a_df)
+
+
+# PANEL B - AGES 27 TO 34 IN JUNE 2012 AND ENTERED US BEFORE AGE 16
+
+# filter to non-citizens, age 27-34 as of June 2012, entered US before age 16
+## NEED TO FIX: believe the 18-35 filter is bad for this cut (i.e. if 41 year old in 2019 is excluded)
+panel_b_df <- model_df %>% 
+  filter(citizen == 3 &
+           between(age_june_2012, 27, 34) &
+           age_of_entry < 16)
+
+# run model on Panel B sample up to 2014
+panel_b_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_b_df, final_year = 2014)
+
+# run model on Panel B sample up to 2019
+panel_b_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_b_df, final_year = 2019)
+
+rm(panel_b_df)
+
+
+# PANEL C - ALL NON-CITIZENS AGES 18-35
+panel_c_df <- model_df %>% 
+  filter(citizen == 3)
+
+# run model on Panel C sample up to 2014
+panel_c_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_c_df, final_year = 2014)
+
+# run model on Panel C sample up to 2019
+panel_c_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_c_df, final_year = 2019)
+
+rm(panel_c_df)
+
+
+# PANEL D -  ALL CITIZENS AND NON-CITIZENS AGES 18-35
+panel_d_df <- model_df
+
+# run model on Panel D up to 2014
+panel_d_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_d_df, final_year = 2014)
+
+# run model on Panel D up to 2019
+panel_d_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
+                              model_df = panel_d_df, final_year = 2019)
+
+rm(panel_d_df)
+
+
