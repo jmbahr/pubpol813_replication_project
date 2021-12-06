@@ -101,8 +101,8 @@ outcome_df <- elig_df %>%
          outcome_income = ifelse(inctot < 0, 0, inctot),
          outcome_income_sub90 = ifelse(inc_perc < .9, outcome_income, -9),
          outcome_school_attendance = ifelse(school == 2, 1, 0), # good
-         outcome_ged = case_when(educd == 64 ~ 1,
-                                 educd == 62 ~ -9,
+         outcome_ged = case_when(year < 2008 ~ -9,
+                                 educd == 64 ~ 1,
                                  TRUE ~ 0),
          outcome_log_income = log(outcome_income + 1),
          outcome_poverty = case_when(poverty == 0 ~ -9,
@@ -209,7 +209,7 @@ calc_fig25 <- function(df, fig_25_years, .x, control = "noncitizen_nondaca"){
   print(.x)
   
   # create if statement for years since healthcare question only arrived in 2008
-  years <- if (.x == "outcome_healthcare") {
+  years <- if (.x %in% c("outcome_healthcare", "outcome_ged")) {
     fig_25_years %>% filter(between(year, 2008, 2014))
   } else {
     fig_25_years 
