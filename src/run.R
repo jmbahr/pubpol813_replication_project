@@ -101,7 +101,9 @@ outcome_df <- elig_df %>%
          outcome_income = ifelse(inctot < 0, 0, inctot),
          outcome_income_sub90 = ifelse(inc_perc < .9, outcome_income, -9),
          outcome_school_attendance = ifelse(school == 2, 1, 0), # good
-         outcome_ged = ifelse(educd %in% c(62,64), 1, 0), # assuming that code 62 is GED
+         outcome_ged = case_when(educd == 64 ~ 1,
+                                 educd == 62 ~ -9,
+                                 TRUE ~ 0),
          outcome_log_income = log(outcome_income + 1),
          outcome_poverty = case_when(poverty == 0 ~ -9,
                                      poverty < 100 ~ 1,
@@ -484,21 +486,26 @@ panel_d_2019_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs,
 
 rm(panel_d_df)
 
+# bind 2014 results into a single dataframe
 results_2014 <- panel_a_2014_coefs %>% mutate(panel = "panel_a") %>% 
   rbind.data.frame(panel_b_2014_coefs %>% mutate(panel = "panel_b")) %>% 
   rbind.data.frame(panel_c_2014_coefs %>% mutate(panel = "panel_c")) %>%
   rbind.data.frame(panel_d_2014_coefs %>% mutate(panel = "panel_d"))
 
+# bind 2019 results into a single dataframe
 results_2019 <- panel_a_2019_coefs %>% mutate(panel = "panel_a") %>% 
   rbind.data.frame(panel_b_2019_coefs %>% mutate(panel = "panel_b")) %>% 
   rbind.data.frame(panel_c_2019_coefs %>% mutate(panel = "panel_c")) %>%
   rbind.data.frame(panel_d_2019_coefs %>% mutate(panel = "panel_d"))
 
+# write results
 results_2014 %>% write_csv("./output/regression_results_2014.csv")
 results_2019 %>% write_csv("./output/regression_results_2019.csv")
 
+# write table 1
 combined_table1 %>% write_csv("./output/table1.csv")
 
+# write fig25 data
 fig_25_df %>% write_csv("./output/figs2to5.csv")
 
 rm(list = ls())
