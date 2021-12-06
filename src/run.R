@@ -1,5 +1,4 @@
 ######### Setup ##########
-
 options(scipen = 0)
 
 # set working directory
@@ -17,7 +16,9 @@ library(fixest)
 # set year of policy
 policy_year <- 2012
 
-######### Read ##########
+#########################
+######### READ ##########
+#########################
 
 # read in data
 acs_over24_df <- haven::read_stata("./ACS_PPS813_F2021_revised.dta")
@@ -37,9 +38,8 @@ acs_df <- rbind.data.frame(acs_over24_df, acs_under24_df)
 # 4) continuously resided in US since June 2007
 # 5) high school diploma or GED
 # 6) no felony
-elig_df = acs_df %>% 
-  filter(educ >= 6 &                  # filter to only high school grads and up 
-           between(age, 18, 35)) %>%    # filter to ages 18-35
+elig_df <- acs_df %>% 
+  filter(educ >= 6) %>% # filter to only high school grads and up )
   mutate(qob_age_adjustment = case_when(birthqtr <= 2 ~ 0,
                                         birthqtr > 2 ~ 1,
                                         TRUE ~ -9),
@@ -87,6 +87,9 @@ rm(acs_df, acs_over24_df, acs_under24_df)
 # 16) Count
 
 outcome_df <- elig_df %>% 
+  group_by(year) %>% 
+  mutate(inc_perc = percent_rank(x = inctot)) %>% 
+  ungroup() %>% 
   mutate(outcome_worked_last_week = case_when(wrklstwk == 2 ~ 1,
                                               wrklstwk == 3 ~ -9,
                                               TRUE ~ 0), # omit if Not Reported
@@ -95,11 +98,11 @@ outcome_df <- elig_df %>%
          outcome_labor_force = ifelse(labforce == 2, 1, 0), # good
          outcome_unemployed = ifelse(empstat == 2, 1, 0),   # good
          outcome_self_employed = ifelse(classwkr == 1, 1, 0), # good
-         outcome_income = inctot,
+         outcome_income = ifelse(inctot < 0, 0, inctot),
+         outcome_income_sub90 = ifelse(inc_perc < .9, outcome_income, -9),
          outcome_school_attendance = ifelse(school == 2, 1, 0), # good
          outcome_ged = ifelse(educd %in% c(62,64), 1, 0), # assuming that code 62 is GED
-         income_zeroed = ifelse(inctot < 0, 0, inctot),
-         outcome_log_income = log(income_zeroed + 1),
+         outcome_log_income = log(outcome_income + 1),
          outcome_poverty = case_when(poverty == 0 ~ -9,
                                      poverty < 100 ~ 1,
                                      TRUE ~ 0),
@@ -129,7 +132,9 @@ outcome_df <- elig_df %>%
 
 rm(elig_df)
 
+############################
 ######### Table 1 ##########
+############################
 
 # create function to calculate means and estimate a t-statistic
 # for null hypothesis that difference in means is equal to 0
@@ -172,11 +177,13 @@ table1_vars <- c(outcome_vars, demo_vars)
 
 # compare to non-citizen, daca ineligible
 table1_nondaca <- purrr::map_dfr(.x = table1_vars, .f = calc_table1, 
-                                 df = outcome_df, control = "noncitizen_nondaca")
+                                 df = outcome_df %>% filter(between(age, 18, 35)), 
+                                 control = "noncitizen_nondaca")
 
 # compare to citizens
 table1_citizen <- purrr::map_dfr(.x = table1_vars, .f = calc_table1, 
-                                 df = outcome_df, control = "citizen") %>% 
+                                 df = outcome_df %>% filter(between(age, 18, 35)), 
+                                 control = "citizen") %>% 
   select(-daca_mean)
 
 # join the two together for table 1
@@ -185,6 +192,7 @@ combined_table1 <- table1_nondaca %>% inner_join(table1_citizen, by = "outcome_v
 
 ##############################################
 ################ FIGURES 2-5 #################
+##############################################
 
 ### NEED TO ADD 90th percentile graph
 
@@ -259,14 +267,16 @@ calc_fig25 <- function(df, fig_25_years, .x, control = "noncitizen_nondaca"){
 
 # run calc_fig25 across all outcome variables
 fig_25_df <- map_dfr(.x = outcome_vars, .f = calc_fig25, 
-                     df = outcome_df, 
+                     df = outcome_df %>% filter(between(age, 18, 35)), 
                      fig_25_years = fig_25_years,
                      control = "noncitizen_nondaca")
 
 
 # create df for estimating d-in-d
 # filter to only non-citizens and pre-2014
-did_df = outcome_df %>% filter(citizen == 3 & year <= 2014) %>% 
+did_df = outcome_df %>% filter(citizen == 3 & 
+                               year <= 2014 &
+                               between(age, 18, 35)) %>% 
   select(starts_with("outcome_"), after_daca, eligible, did_term)
 
 
@@ -348,7 +358,10 @@ model_df <- outcome_df %>%
 rm(outcome_df)
 
 
-## need to parameterize the various cuts of demographics
+# create generic fucntion for estimating model given:
+# 1) A sample, filtering to relevant panel of individuals
+# 2) Outcome variable, ensuring we are filtering out Nulls for that particular outcome
+# 3) Final year - which year to end the analysis in (2014 or 2019 for this particular paper)
 get_coefs <- function(model_df, outcome, final_year){
   
   print(outcome)
@@ -442,7 +455,8 @@ rm(panel_b_df)
 ########################################
 
 panel_c_df <- model_df %>% 
-  filter(citizen == 3)
+  filter(citizen == 3 & 
+         between(age, 18, 35))
 
 # run model on Panel C sample up to 2014
 panel_c_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
@@ -458,7 +472,7 @@ rm(panel_c_df)
 # PANEL D -  ALL CITIZENS AND NON-CITIZENS AGES 18-35
 ######################################################
 
-panel_d_df <- model_df
+panel_d_df <- model_df %>% filter(between(age, 18, 35))
 
 # run model on Panel D up to 2014
 panel_d_2014_coefs <- map_dfr(.x = outcome_vars, .f = get_coefs, 
