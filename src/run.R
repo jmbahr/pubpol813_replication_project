@@ -12,6 +12,7 @@ library(purrr)
 library(magrittr)
 library(scales)
 library(fixest)
+library(ggrepel)
 
 # set year of policy
 policy_year <- 2012
@@ -90,28 +91,28 @@ outcome_df <- elig_df %>%
   group_by(year) %>% 
   mutate(inc_perc = percent_rank(x = inctot)) %>% 
   ungroup() %>% 
-  mutate(outcome_worked_last_week = case_when(wrklstwk == 2 ~ 1,
+  mutate(outcome_fraction_worked_last_week = case_when(wrklstwk == 2 ~ 1,
                                               wrklstwk == 3 ~ -9,
                                               TRUE ~ 0), # omit if Not Reported
-         outcome_worked_last_year = ifelse(workedyr == 3, 1, 0),
-         outcome_hours_worked = uhrswork,
-         outcome_labor_force = ifelse(labforce == 2, 1, 0), # good
-         outcome_unemployed = ifelse(empstat == 2, 1, 0),   # good
-         outcome_self_employed = ifelse(classwkr == 1, 1, 0), # good
+         outcome_fraction_worked_last_year = ifelse(workedyr == 3, 1, 0),
+         outcome_hours_worked_per_week = uhrswork,
+         outcome_fraction_labor_force = ifelse(labforce == 2, 1, 0), # good
+         outcome_fraction_unemployed = ifelse(empstat == 2, 1, 0),   # good
+         outcome_fraction_self_employed = ifelse(classwkr == 1, 1, 0), # good
          outcome_income = ifelse(inctot < 0, 0, inctot),
-         outcome_income_sub90 = ifelse(inc_perc < .9, outcome_income, -9),
-         outcome_school_attendance = ifelse(school == 2, 1, 0), # good
-         outcome_ged = case_when(year < 2008 ~ -9,
+         outcome_income_for_below_90th_percentile = ifelse(inc_perc < .9, outcome_income, -9),
+         outcome_fraction_attending_school = ifelse(school == 2, 1, 0), # good
+         outcome_fraction_with_ged = case_when(year < 2008 ~ -9,
                                  educd == 64 ~ 1,
                                  TRUE ~ 0),
-         outcome_log_income = log(outcome_income + 1),
-         outcome_poverty = case_when(poverty == 0 ~ -9,
+         outcome_log_income_plus_1 = log(outcome_income + 1),
+         outcome_fraction_in_poverty = case_when(poverty == 0 ~ -9,
                                      poverty < 100 ~ 1,
                                      TRUE ~ 0),
-         outcome_home_ownership = case_when(ownershp == 1 ~ 1,
+         outcome_fraction_own_home = case_when(ownershp == 1 ~ 1,
                                             ownershp == 0 ~ -9,
                                             TRUE ~ 0),
-         outcome_healthcare = case_when(hcovany == 2 ~ 1,
+         outcome_fraction_with_health_insurance = case_when(hcovany == 2 ~ 1,
                                         is.na(hcovany) ~ -9,
                                         TRUE ~ 0),
          demo_yrsusa = yrsusa1, 
@@ -196,8 +197,6 @@ combined_table1 <- table1_nondaca %>% inner_join(table1_citizen, by = "outcome_v
 ################ FIGURES 2-5 #################
 ##############################################
 
-### NEED TO ADD 90th percentile graph
-
 # create distinct list of years up to 2014
 fig_25_years <- outcome_df %>% filter(year <= 2014) %>% 
   select(year) %>% distinct()
@@ -209,7 +208,7 @@ calc_fig25 <- function(df, fig_25_years, .x, control = "noncitizen_nondaca"){
   print(.x)
   
   # create if statement for years since healthcare question only arrived in 2008
-  years <- if (.x %in% c("outcome_healthcare", "outcome_ged")) {
+  years <- if (.x %in% c("outcome_fraction_with_health_insurance", "outcome_fraction_with_ged")) {
     fig_25_years %>% filter(between(year, 2008, 2014))
   } else {
     fig_25_years 
@@ -303,7 +302,6 @@ calc_did_nocontrols <- function(df, outcome){
   return(did_caption)
 }
 
-
 # create function to dynamically plot output of fig25 calcs
 plot_fig25 <- function(fig_25_df, did_df, outcome){
   
@@ -318,17 +316,21 @@ plot_fig25 <- function(fig_25_df, did_df, outcome){
   
   label_height <- max(fig_df[["difference"]])
   
-  ggplot(fig_df %>% filter(outcome_variable == outcome), aes(x=year, y=difference)) + 
+  g1 <- ggplot(fig_df %>% filter(outcome_variable == outcome), aes(x=year, y=difference)) + 
     geom_rect(aes(xmin=2012, xmax=2013, ymin=-Inf, ymax=Inf), alpha = .08) +
     geom_errorbar(aes(ymin=difference-ci, ymax=difference+ci), width=.1) +
     geom_line() +
     geom_point() +
     theme_bw() +
     labs(title = title_name,
+         subtitle = did_caption,
          x = "Year",
          y = "Difference") +
-    annotate(geom="text", x=2009, y=label_height, label=did_caption) +
     scale_x_continuous(breaks= pretty_breaks()) 
+  
+  ggsave(filename = sprintf("./output_shared/graphs/%s.png", outcome), plot = g1)
+  
+  return(g1)
   
   
 }
