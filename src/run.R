@@ -96,7 +96,7 @@ outcome_df <- elig_df %>%
                                               TRUE ~ 0), # omit if Not Reported
          outcome_fraction_worked_last_year = ifelse(workedyr == 3, 1, 0),
          outcome_hours_worked_per_week = uhrswork,
-         outcome_fraction_labor_force = ifelse(labforce == 2, 1, 0), # good
+         outcome_fraction_in_labor_force = ifelse(labforce == 2, 1, 0), # good
          outcome_fraction_unemployed = ifelse(empstat == 2, 1, 0),   # good
          outcome_fraction_self_employed = ifelse(classwkr == 1, 1, 0), # good
          outcome_income = ifelse(inctot < 0, 0, inctot),
@@ -121,6 +121,7 @@ outcome_df <- elig_df %>%
          demo_white = ifelse(race == 1, 1, 0),
          demo_black = ifelse(race == 2, 1, 0),
          demo_asian = ifelse(race %in% c(4,5,6), 1, 0),
+         demo_all_other_race = ifelse(race %in% c(3, 7, 8, 9), 1, 0),
          demo_home_spanish = ifelse(language == 12, 1, 0),
          demo_latin_america = ifelse(between(bpl, 200, 300), 1, 0),
          demo_age = age,
@@ -347,9 +348,10 @@ map(.x = outcome_vars, .f = plot_fig25, fig_25_df = fig_25_df, did_df = did_df)
 
 # create state/year unemployment level variable
 state_unemployed <- outcome_df %>% 
-  filter(outcome_unemployed != -9) %>% 
+  filter(outcome_fraction_unemployed != -9) %>% 
   group_by(year, statefip) %>% 
-  summarise(state_unemployment = mean(outcome_unemployed))
+  summarise(state_unemployment = mean(outcome_fraction_unemployed)) %>% 
+  ungroup()
 
 # join on state/year unemployment and select columns of interest
 # filter to only non-citizens
@@ -373,7 +375,7 @@ get_coefs <- function(model_df, outcome, final_year){
   
   # dynamically create formula given outcome of interest
   formula <- sprintf("%s ~ did_term + eligible + after_daca + demo_some_college + 
-                      demo_college + demo_male  + demo_black + demo_asian + demo_married + 
+                      demo_college + demo_male  + demo_white + demo_black + demo_asian + demo_married + 
                       state_unemployment | demo_age + age_of_entry + year +
                       statefip + year^statefip", outcome) %>% as.formula()
   
